@@ -1,5 +1,30 @@
 <script setup>
-import { RouterLink } from 'vue-router';
+import { ref } from 'vue'
+import { useRouter, RouterLink } from 'vue-router'
+import { useAuth } from '../composables/useAuth.js'
+
+const router = useRouter()
+const { login, isLoggedIn } = useAuth()
+
+if (isLoggedIn.value) router.replace('/')
+
+const email    = ref('')
+const password = ref('')
+const error    = ref('')
+const loading  = ref(false)
+
+async function submit() {
+  error.value   = ''
+  loading.value = true
+  try {
+    await login(email.value.trim(), password.value)
+    router.replace('/')
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    loading.value = false
+  }
+}
 </script>
 
 <template>
@@ -8,15 +33,17 @@ import { RouterLink } from 'vue-router';
       <h1 class="title">Войти</h1>
       <p class="subtitle">Добро пожаловать в галерею</p>
 
-      <form class="form" novalidate>
+      <form class="form" novalidate @submit.prevent="submit">
         <div class="field">
           <label for="email" class="label">Электронная почта</label>
           <input
             id="email"
+            v-model="email"
             type="email"
             class="input"
             placeholder="example@mail.com"
             autocomplete="email"
+            required
           />
         </div>
 
@@ -24,14 +51,20 @@ import { RouterLink } from 'vue-router';
           <label for="password" class="label">Пароль</label>
           <input
             id="password"
+            v-model="password"
             type="password"
             class="input"
             placeholder="••••••••"
             autocomplete="current-password"
+            required
           />
         </div>
 
-        <button type="submit" class="submit-btn">Войти</button>
+        <p v-if="error" class="error">{{ error }}</p>
+
+        <button type="submit" class="submit-btn" :disabled="loading">
+          {{ loading ? 'Вход...' : 'Войти' }}
+        </button>
       </form>
 
       <p class="switch">
@@ -95,7 +128,7 @@ import { RouterLink } from 'vue-router';
   border: 1px solid transparent;
   border-radius: 2px;
   padding: 12px 14px;
-  font-family: 'Raleway', sans-serif;
+  font-family: 'Inter', sans-serif;
   font-size: 0.9rem;
   color: #000;
   outline: none;

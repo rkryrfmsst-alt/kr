@@ -1,7 +1,12 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { useRoute } from 'vue-router';
 import PaintingModal from '../components/PaintingModal.vue';
 import { api, BASE } from '../api/index.js';
+import { useAuth } from '../composables/useAuth.js';
+
+const route = useRoute();
+const { adminMode } = useAuth();
 
 const selectedPainting = ref(null);
 
@@ -45,13 +50,15 @@ const resetFilters = () => {
   selectedSubject.value   = '';
   selectedAuthor.value    = '';
   selectedTechnique.value = '';
-  yearFrom.value          = '';
-  yearTo.value            = '';
+  yearFrom.value          = minYear.value;
+  yearTo.value            = maxYear.value;
 };
 
 const hasActiveFilters = computed(() =>
   searchQuery.value || selectedStyle.value || selectedSubject.value ||
-  selectedAuthor.value || selectedTechnique.value || yearFrom.value || yearTo.value
+  selectedAuthor.value || selectedTechnique.value ||
+  (yearFrom.value !== '' && Number(yearFrom.value) !== minYear.value) ||
+  (yearTo.value   !== '' && Number(yearTo.value)   !== maxYear.value)
 );
 
 const styles = computed(() =>
@@ -60,12 +67,25 @@ const styles = computed(() =>
 const subjects = computed(() =>
   [...new Set(paintings.value.flatMap(p => (p.plots ?? []).map(pl => pl.name)))].sort()
 );
+const allAuthors   = ref([]);
+const allMaterials = ref([]);
+const allStyles    = ref([]);
+const allPlots     = ref([]);
 const authors = computed(() =>
-  [...new Set(paintings.value.flatMap(p => (p.authors ?? []).map(authorName)))].sort()
+  allAuthors.value.map(authorName).sort()
 );
 const techniques = computed(() =>
   [...new Set(paintings.value.filter(p => p.material).map(p => p.material.name))].sort()
 );
+
+const minYear = computed(() => {
+  const years = paintings.value.map(p => p.year).filter(y => y != null);
+  return years.length ? Math.min(...years) : '';
+});
+const maxYear = computed(() => {
+  const years = paintings.value.map(p => p.year).filter(y => y != null);
+  return years.length ? Math.max(...years) : '';
+});
 
 const isSortOpen  = ref(false);
 const currentSort = ref('default');
@@ -95,7 +115,15 @@ onMounted(async () => {
   document.addEventListener('keydown', handleKeydown);
 
   try {
-    paintings.value = await api.getPaintings();
+    [paintings.value, allAuthors.value, allMaterials.value, allStyles.value, allPlots.value] = await Promise.all([
+      api.getPaintings(), api.getAuthors(), api.getMaterials(), api.getStyles(), api.getPlots(),
+    ]);
+    yearFrom.value  = minYear.value;
+    yearTo.value    = maxYear.value;
+    if (route.query.author) {
+      selectedAuthor.value = route.query.author;
+      isFilterOpen.value   = true;
+    }
   } catch (e) {
     loadError.value = 'Не удалось загрузить картины.';
   } finally {
@@ -107,6 +135,144 @@ onUnmounted(() => {
   document.removeEventListener('mousedown', handleClickOutside);
   document.removeEventListener('keydown', handleKeydown);
 });
+
+// --- Add painting modal ---
+const showAddModal    = ref(false);
+const addLoading      = ref(false);
+const addError        = ref('');
+const newTitle        = ref('');
+const newYear         = ref('');
+const newDescription  = ref('');
+const newAuthorID     = ref('');
+const newMaterialID   = ref('');
+const newStyleID      = ref('');
+const newPlotID       = ref('');
+const newImageFile    = ref(null);
+const imagePreview    = ref('');
+
+function openAddModal() {
+  newTitle.value       = '';
+  newYear.value        = '';
+  newDescription.value = '';
+  newAuthorID.value    = '';
+  newMaterialID.value  = '';
+  newStyleID.value     = '';
+  newPlotID.value      = '';
+  newImageFile.value   = null;
+  imagePreview.value   = '';
+  addError.value       = '';
+  showAddModal.value   = true;
+}
+
+function closeAddModal() {
+  showAddModal.value = false;
+}
+
+function onImageChange(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  newImageFile.value = file;
+  imagePreview.value = URL.createObjectURL(file);
+}
+
+async function submitAddPainting() {
+  addError.value = '';
+  addLoading.value = true;
+  try {
+    const fd = new FormData();
+    fd.append('title', newTitle.value.trim());
+    if (newYear.value)        fd.append('year',        newYear.value);
+    if (newDescription.value) fd.append('description', newDescription.value.trim());
+    if (newMaterialID.value)  fd.append('material_id', newMaterialID.value);
+    if (newAuthorID.value)    fd.append('author_ids[]', newAuthorID.value);
+    if (newStyleID.value) fd.append('style_ids[]', newStyleID.value);
+    if (newPlotID.value)  fd.append('plot_ids[]',  newPlotID.value);
+    if (newImageFile.value)   fd.append('image',       newImageFile.value);
+
+    const painting = await api.createPainting(fd);
+    paintings.value.push(painting);
+    closeAddModal();
+  } catch (e) {
+    addError.value = e.message;
+  } finally {
+    addLoading.value = false;
+  }
+}
+
+// --- Edit painting modal ---
+const showEditModal      = ref(false);
+const editPaintingID     = ref(null);
+const editLoading        = ref(false);
+const editError          = ref('');
+const editTitle          = ref('');
+const editYear           = ref('');
+const editDescription    = ref('');
+const editAuthorID       = ref('');
+const editMaterialID     = ref('');
+const editStyleID        = ref('');
+const editPlotID         = ref('');
+const editImageFile      = ref(null);
+const editImagePreview   = ref('');
+
+function openEditModal(painting) {
+  editPaintingID.value   = painting.id;
+  editTitle.value        = painting.title;
+  editYear.value         = painting.year ?? '';
+  editDescription.value  = painting.description ?? '';
+  editAuthorID.value     = painting.authors?.[0]?.id ?? '';
+  editMaterialID.value   = painting.material?.id ?? '';
+  editStyleID.value      = painting.styles?.[0]?.id ?? '';
+  editPlotID.value       = painting.plots?.[0]?.id ?? '';
+  editImageFile.value    = null;
+  editImagePreview.value = painting.image_path ? BASE + painting.image_path : '';
+  editError.value        = '';
+  showEditModal.value    = true;
+}
+
+function closeEditModal() {
+  showEditModal.value = false;
+}
+
+function onEditImageChange(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  editImageFile.value    = file;
+  editImagePreview.value = URL.createObjectURL(file);
+}
+
+async function submitEditPainting() {
+  editError.value   = '';
+  editLoading.value = true;
+  try {
+    const fd = new FormData();
+    fd.append('title', editTitle.value.trim());
+    if (editYear.value)        fd.append('year',         editYear.value);
+    if (editDescription.value) fd.append('description',  editDescription.value.trim());
+    if (editMaterialID.value)  fd.append('material_id',  editMaterialID.value);
+    if (editAuthorID.value)    fd.append('author_ids[]', editAuthorID.value);
+    if (editStyleID.value)     fd.append('style_ids[]',  editStyleID.value);
+    if (editPlotID.value)      fd.append('plot_ids[]',   editPlotID.value);
+    if (editImageFile.value)   fd.append('image',        editImageFile.value);
+
+    const updated = await api.updatePainting(editPaintingID.value, fd);
+    const idx = paintings.value.findIndex(p => p.id === editPaintingID.value);
+    if (idx !== -1) paintings.value[idx] = updated;
+    closeEditModal();
+  } catch (e) {
+    editError.value = e.message;
+  } finally {
+    editLoading.value = false;
+  }
+}
+
+async function deletePainting(painting) {
+  try {
+    await api.deletePainting(painting.id);
+    paintings.value = paintings.value.filter(p => p.id !== painting.id);
+  } catch (e) {
+    loadError.value = e.message;
+  }
+}
 
 const filteredPaintings = computed(() => {
   let result = paintings.value;
@@ -147,6 +313,8 @@ const filteredPaintings = computed(() => {
         <img src="../assets/icons/arrow.svg" alt="" :class="['arrow-icon', { rotate: isFilterOpen }]">
       </button>
 
+      <div class="filter-controls-right">
+      <button v-if="adminMode" class="add-painting-btn" @click="openAddModal">+ Добавить картину</button>
       <div class="sort-box" ref="sortRef">
         <div class="sort-dropdown">
           <button class="sort-trigger" @click="isSortOpen = !isSortOpen">
@@ -167,6 +335,7 @@ const filteredPaintings = computed(() => {
             </div>
           </transition>
         </div>
+      </div>
       </div>
     </div>
 
@@ -235,6 +404,10 @@ const filteredPaintings = computed(() => {
       <div v-for="painting in filteredPaintings" :key="painting.id" class="art-card" @click="openModal(painting)">
         <div class="image-wrapper">
           <img v-if="painting.image_path" :src="BASE + painting.image_path" :alt="painting.title" class="art-image">
+          <div v-if="adminMode" class="card-admin-overlay">
+            <button class="card-admin-btn" @click.stop="openEditModal(painting)">Изменить</button>
+            <button class="card-admin-btn card-admin-btn--del" @click.stop="deletePainting(painting)">Удалить</button>
+          </div>
         </div>
         <div class="art-info">
           <h3 class="art-title">{{ painting.title }}</h3>
@@ -250,6 +423,153 @@ const filteredPaintings = computed(() => {
     :painting="selectedPainting"
     @close="closeModal"
   />
+
+  <teleport to="body">
+    <div v-if="showEditModal" class="ap-backdrop" @click.self="closeEditModal">
+      <div class="ap-modal">
+        <h2 class="ap-title">Редактировать картину</h2>
+        <form class="ap-form" novalidate @submit.prevent="submitEditPainting">
+          <div class="ap-field">
+            <label class="ap-label">Название <span style="color:#c00;font-family:Arial,sans-serif;font-size:0.9rem;">*</span></label>
+            <input v-model="editTitle" class="ap-input" type="text" placeholder="Название работы" />
+          </div>
+          <div class="ap-row">
+            <div class="ap-field">
+              <label class="ap-label">Автор</label>
+              <select v-model="editAuthorID" class="ap-input ap-select">
+                <option value="">— не указан —</option>
+                <option v-for="a in allAuthors" :key="a.id" :value="a.id">{{ authorName(a) }}</option>
+              </select>
+            </div>
+            <div class="ap-field">
+              <label class="ap-label">Год</label>
+              <input v-model="editYear" class="ap-input" type="number" placeholder="2024" min="1000" max="2099" />
+            </div>
+          </div>
+          <div class="ap-field">
+            <label class="ap-label">Техника</label>
+            <select v-model="editMaterialID" class="ap-input ap-select">
+              <option value="">— не указана —</option>
+              <option v-for="m in allMaterials" :key="m.id" :value="m.id">{{ m.name }}</option>
+            </select>
+          </div>
+          <div class="ap-row">
+            <div class="ap-field">
+              <label class="ap-label">Стиль</label>
+              <select v-model="editStyleID" class="ap-input ap-select">
+                <option value="">— не указан —</option>
+                <option v-for="s in allStyles" :key="s.id" :value="s.id">{{ s.name }}</option>
+              </select>
+            </div>
+            <div class="ap-field">
+              <label class="ap-label">Сюжет</label>
+              <select v-model="editPlotID" class="ap-input ap-select">
+                <option value="">— не указан —</option>
+                <option v-for="p in allPlots" :key="p.id" :value="p.id">{{ p.name }}</option>
+              </select>
+            </div>
+          </div>
+          <div class="ap-field">
+            <label class="ap-label">Описание</label>
+            <textarea v-model="editDescription" class="ap-input ap-textarea" placeholder="Краткое описание..." rows="3"></textarea>
+          </div>
+          <div class="ap-field">
+            <label class="ap-label">Изображение (оставьте пустым, чтобы не менять)</label>
+            <label class="ap-file-label">
+              <input type="file" accept="image/*" class="ap-file-input" @change="onEditImageChange" />
+              <span>{{ editImageFile ? editImageFile.name : 'Выбрать новый файл...' }}</span>
+            </label>
+            <img v-if="editImagePreview" :src="editImagePreview" class="ap-preview" alt="preview" />
+          </div>
+          <p v-if="editError" class="ap-error">{{ editError }}</p>
+          <div class="ap-actions">
+            <button type="button" class="ap-cancel" @click="closeEditModal">Отмена</button>
+            <button type="submit" class="ap-submit" :disabled="editLoading">
+              {{ editLoading ? 'Сохранение...' : 'Сохранить' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </teleport>
+
+  <teleport to="body">
+    <div v-if="showAddModal" class="ap-backdrop" @click.self="closeAddModal">
+      <div class="ap-modal">
+        <h2 class="ap-title">Новая картина</h2>
+
+        <form class="ap-form" novalidate @submit.prevent="submitAddPainting">
+
+          <div class="ap-field">
+            <label class="ap-label">Название <span style="color:#c00;font-family:Arial,sans-serif;font-size:0.9rem;">*</span></label>
+            <input v-model="newTitle" class="ap-input" type="text" placeholder="Название работы" />
+          </div>
+
+          <div class="ap-row">
+            <div class="ap-field">
+              <label class="ap-label">Автор</label>
+              <select v-model="newAuthorID" class="ap-input ap-select">
+                <option value="">— не указан —</option>
+                <option v-for="a in allAuthors" :key="a.id" :value="a.id">{{ authorName(a) }}</option>
+              </select>
+            </div>
+            <div class="ap-field">
+              <label class="ap-label">Год</label>
+              <input v-model="newYear" class="ap-input" type="number" placeholder="2024" min="1000" max="2099" />
+            </div>
+          </div>
+
+          <div class="ap-field">
+            <label class="ap-label">Техника</label>
+            <select v-model="newMaterialID" class="ap-input ap-select">
+              <option value="">— не указана —</option>
+              <option v-for="m in allMaterials" :key="m.id" :value="m.id">{{ m.name }}</option>
+            </select>
+          </div>
+
+          <div class="ap-row">
+            <div class="ap-field">
+              <label class="ap-label">Стиль</label>
+              <select v-model="newStyleID" class="ap-input ap-select">
+                <option value="">— не указан —</option>
+                <option v-for="s in allStyles" :key="s.id" :value="s.id">{{ s.name }}</option>
+              </select>
+            </div>
+            <div class="ap-field">
+              <label class="ap-label">Сюжет</label>
+              <select v-model="newPlotID" class="ap-input ap-select">
+                <option value="">— не указан —</option>
+                <option v-for="p in allPlots" :key="p.id" :value="p.id">{{ p.name }}</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="ap-field">
+            <label class="ap-label">Описание</label>
+            <textarea v-model="newDescription" class="ap-input ap-textarea" placeholder="Краткое описание..." rows="3"></textarea>
+          </div>
+
+          <div class="ap-field">
+            <label class="ap-label">Изображение</label>
+            <label class="ap-file-label">
+              <input type="file" accept="image/*" class="ap-file-input" @change="onImageChange" />
+              <span>{{ newImageFile ? newImageFile.name : 'Выбрать файл...' }}</span>
+            </label>
+            <img v-if="imagePreview" :src="imagePreview" class="ap-preview" alt="preview" />
+          </div>
+
+          <p v-if="addError" class="ap-error">{{ addError }}</p>
+
+          <div class="ap-actions">
+            <button type="button" class="ap-cancel" @click="closeAddModal">Отмена</button>
+            <button type="submit" class="ap-submit" :disabled="addLoading">
+              {{ addLoading ? 'Сохранение...' : 'Добавить' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </teleport>
 </template>
 
 <style scoped>
@@ -264,7 +584,31 @@ const filteredPaintings = computed(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
 }
+
+.filter-controls-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.add-painting-btn {
+  background: #000;
+  color: #fff;
+  border: none;
+  border-radius: 2px;
+  padding: 10px 18px;
+  font-family: 'Raleway', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  cursor: pointer;
+  transition: background 0.2s;
+  white-space: nowrap;
+}
+.add-painting-btn:hover { background: #222; }
 
 .toggle-btn {
   background: none;
@@ -272,12 +616,14 @@ const filteredPaintings = computed(() => {
   color: #000;
   font-family: 'Raleway', sans-serif;
   font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 2px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  padding: 5px 0;
+  text-transform: uppercase;
+  font-weight: 500;
+  letter-spacing: 1px;
 }
 
 .arrow-icon {
@@ -414,9 +760,22 @@ const filteredPaintings = computed(() => {
   font-size: 0.9rem;
   outline: none;
   transition: border-color 0.2s;
+  box-sizing: border-box;
+  width: 100%;
+  height: 42px;
 }
 .filter-group input:focus,
 .filter-group select:focus { border-color: #444; }
+
+.filter-group select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23666' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+  cursor: pointer;
+}
 
 .expand-enter-active,
 .expand-leave-active {
@@ -470,6 +829,38 @@ const filteredPaintings = computed(() => {
 
 .art-card:hover .image-wrapper::after { opacity: 1; }
 
+.card-admin-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 10px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  z-index: 2;
+}
+.image-wrapper:hover .card-admin-overlay { opacity: 1; }
+
+.card-admin-btn {
+  flex: 1;
+  background: rgba(255,255,255,0.92);
+  border: none;
+  border-radius: 2px;
+  padding: 7px 0;
+  font-family: 'Raleway', sans-serif;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #000;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.card-admin-btn:hover { background: #fff; }
+.card-admin-btn--del { color: #c00; }
+.card-admin-btn--del:hover { background: #fff; }
+
 .art-image {
   width: 100%;
   height: 100%;
@@ -488,6 +879,151 @@ const filteredPaintings = computed(() => {
   font-size: 0.85rem;
   margin: 0;
 }
+
+/* ---- Add painting modal ---- */
+.ap-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 20px;
+}
+.ap-modal {
+  background: #fff;
+  width: 100%;
+  max-width: 700px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 40px 48px;
+  border-radius: 4px;
+}
+.ap-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #000;
+  margin: 0 0 28px;
+}
+.ap-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.ap-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.ap-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.ap-label {
+  font-family: 'Raleway', sans-serif;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #000;
+}
+.ap-input {
+  background: #ebebeb;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  padding: 11px 14px;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.9rem;
+  color: #000;
+  outline: none;
+  transition: border-color 0.2s;
+  width: 100%;
+  box-sizing: border-box;
+}
+.ap-input:focus { border-color: #444; }
+.ap-input::placeholder { color: #aaa; }
+.ap-select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23666' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+  cursor: pointer;
+}
+.ap-textarea {
+  resize: none;
+  min-height: 80px;
+}
+.ap-file-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #ebebeb;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  padding: 11px 14px;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.85rem;
+  color: #666;
+  transition: border-color 0.2s;
+}
+.ap-file-label:hover { border-color: #bbb; }
+.ap-file-input {
+  display: none;
+}
+.ap-preview {
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  border: 1px solid #e8e8e8;
+  border-radius: 2px;
+  margin-top: 4px;
+}
+.ap-error {
+  font-size: 0.8rem;
+  color: #c00;
+  margin: 0;
+}
+.ap-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.ap-cancel {
+  background: none;
+  border: 1px solid #ccc;
+  border-radius: 2px;
+  padding: 10px 20px;
+  font-family: 'Raleway', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #666;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+}
+.ap-cancel:hover { border-color: #999; color: #000; }
+.ap-submit {
+  background: #000;
+  color: #fff;
+  border: none;
+  border-radius: 2px;
+  padding: 10px 24px;
+  font-family: 'Raleway', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.ap-submit:hover:not(:disabled) { background: #222; }
+.ap-submit:disabled { opacity: 0.5; cursor: default; }
 
 @media (max-width: 1100px) {
   .gallery { grid-template-columns: repeat(3, 1fr); }

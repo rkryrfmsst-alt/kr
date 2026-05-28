@@ -1,0 +1,44 @@
+# Go binaries
+backend/*.exe
+backend/cmd/*.exe
+*.exe
+
+# Go build cache
+backend/tmp/
+
+# Environment variables
+backend/.env
+.env
+.env.*
+!.env.example
+
+# Database dumps (contain sensitive data)
+dump.sql
+*.sql
+
+# Docs
+README.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.sw?
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/coverage/
+frontend/*.local
+frontend/.eslintcache
+frontend/__screenshots__/
+frontend/cypress/videos/
+frontend/cypress/screenshots/
+*.timestamp-*.mjs
+*.tsbuildinfo

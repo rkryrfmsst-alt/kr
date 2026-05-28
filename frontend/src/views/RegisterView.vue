@@ -1,5 +1,40 @@
 <script setup>
-import { RouterLink } from 'vue-router';
+import { ref } from 'vue'
+import { useRouter, RouterLink } from 'vue-router'
+import { useAuth } from '../composables/useAuth.js'
+
+const router = useRouter()
+const { register, isLoggedIn } = useAuth()
+
+if (isLoggedIn.value) router.replace('/')
+
+const email    = ref('')
+const username = ref('')
+const password = ref('')
+const confirm  = ref('')
+const error    = ref('')
+const loading  = ref(false)
+
+async function submit() {
+  error.value = ''
+  if (password.value !== confirm.value) {
+    error.value = 'Пароли не совпадают'
+    return
+  }
+  if (password.value.length < 5) {
+    error.value = 'Пароль должен содержать минимум 5 символов'
+    return
+  }
+  loading.value = true
+  try {
+    await register(email.value.trim(), username.value.trim(), password.value)
+    router.replace('/')
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    loading.value = false
+  }
+}
 </script>
 
 <template>
@@ -8,39 +43,30 @@ import { RouterLink } from 'vue-router';
       <h1 class="title">Регистрация</h1>
       <p class="subtitle">Создайте аккаунт, чтобы сохранять работы</p>
 
-      <form class="form" novalidate>
-        <div class="row">
-          <div class="field">
-            <label for="firstName" class="label">Имя</label>
-            <input
-              id="firstName"
-              type="text"
-              class="input"
-              placeholder="Иван"
-              autocomplete="given-name"
-            />
-          </div>
-
-          <div class="field">
-            <label for="lastName" class="label">Фамилия</label>
-            <input
-              id="lastName"
-              type="text"
-              class="input"
-              placeholder="Иванов"
-              autocomplete="family-name"
-            />
-          </div>
+      <form class="form" novalidate @submit.prevent="submit">
+        <div class="field">
+          <label for="username" class="label">Имя пользователя</label>
+          <input
+            id="username"
+            v-model="username"
+            type="text"
+            class="input"
+            placeholder="username"
+            autocomplete="username"
+            required
+          />
         </div>
 
         <div class="field">
           <label for="email" class="label">Электронная почта</label>
           <input
             id="email"
+            v-model="email"
             type="email"
             class="input"
             placeholder="example@mail.com"
             autocomplete="email"
+            required
           />
         </div>
 
@@ -48,10 +74,12 @@ import { RouterLink } from 'vue-router';
           <label for="password" class="label">Пароль</label>
           <input
             id="password"
+            v-model="password"
             type="password"
             class="input"
-            placeholder="Минимум 8 символов"
+            placeholder="Минимум 5 символов"
             autocomplete="new-password"
+            required
           />
         </div>
 
@@ -59,14 +87,20 @@ import { RouterLink } from 'vue-router';
           <label for="passwordConfirm" class="label">Повторите пароль</label>
           <input
             id="passwordConfirm"
+            v-model="confirm"
             type="password"
             class="input"
             placeholder="••••••••"
             autocomplete="new-password"
+            required
           />
         </div>
 
-        <button type="submit" class="submit-btn">Создать аккаунт</button>
+        <p v-if="error" class="error">{{ error }}</p>
+
+        <button type="submit" class="submit-btn" :disabled="loading">
+          {{ loading ? 'Создание...' : 'Создать аккаунт' }}
+        </button>
       </form>
 
       <p class="switch">
@@ -88,7 +122,7 @@ import { RouterLink } from 'vue-router';
 
 .card {
   width: 100%;
-  max-width: 460px;
+  max-width: 420px;
 }
 
 .title {
@@ -111,12 +145,6 @@ import { RouterLink } from 'vue-router';
   gap: 20px;
 }
 
-.row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-
 .field {
   display: flex;
   flex-direction: column;
@@ -136,7 +164,7 @@ import { RouterLink } from 'vue-router';
   border: 1px solid transparent;
   border-radius: 2px;
   padding: 12px 14px;
-  font-family: 'Raleway', sans-serif;
+  font-family: 'Inter', sans-serif;
   font-size: 0.9rem;
   color: #000;
   outline: none;
@@ -184,8 +212,4 @@ import { RouterLink } from 'vue-router';
   transition: opacity 0.2s;
 }
 .switch-link:hover { opacity: 0.5; }
-
-@media (max-width: 480px) {
-  .row { grid-template-columns: 1fr; }
-}
 </style>

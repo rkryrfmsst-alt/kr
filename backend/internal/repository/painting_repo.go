@@ -108,6 +108,81 @@ func (r *PaintingRepository) GetAll() ([]model.Painting, error) {
 	return paintings, nil
 }
 
+func (r *PaintingRepository) Create(title string, description *string, year *int, materialID *int, imagePath *string, authorIDs, styleIDs, plotIDs []int) (*model.Painting, error) {
+	var id int
+	err := r.db.QueryRow(
+		`INSERT INTO paintings (title, description, year, material_id, image_path)
+		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		title, description, year, materialID, imagePath,
+	).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	for _, aID := range authorIDs {
+		if _, err := r.db.Exec(`INSERT INTO paintings_authors (painting_id, author_id) VALUES ($1, $2)`, id, aID); err != nil {
+			return nil, err
+		}
+	}
+	for _, sID := range styleIDs {
+		if _, err := r.db.Exec(`INSERT INTO paintings_styles (painting_id, style_id) VALUES ($1, $2)`, id, sID); err != nil {
+			return nil, err
+		}
+	}
+	for _, pID := range plotIDs {
+		if _, err := r.db.Exec(`INSERT INTO paintings_plots (painting_id, plot_id) VALUES ($1, $2)`, id, pID); err != nil {
+			return nil, err
+		}
+	}
+	return r.GetByID(id)
+}
+
+func (r *PaintingRepository) Update(id int, title string, description *string, year *int, materialID *int, imagePath *string, authorIDs, styleIDs, plotIDs []int) (*model.Painting, error) {
+	if imagePath != nil {
+		if _, err := r.db.Exec(
+			`UPDATE paintings SET title=$1, description=$2, year=$3, material_id=$4, image_path=$5 WHERE id=$6`,
+			title, description, year, materialID, imagePath, id,
+		); err != nil {
+			return nil, err
+		}
+	} else {
+		if _, err := r.db.Exec(
+			`UPDATE paintings SET title=$1, description=$2, year=$3, material_id=$4 WHERE id=$5`,
+			title, description, year, materialID, id,
+		); err != nil {
+			return nil, err
+		}
+	}
+
+	r.db.Exec(`DELETE FROM paintings_authors WHERE painting_id=$1`, id)
+	r.db.Exec(`DELETE FROM paintings_styles  WHERE painting_id=$1`, id)
+	r.db.Exec(`DELETE FROM paintings_plots   WHERE painting_id=$1`, id)
+
+	for _, aID := range authorIDs {
+		if _, err := r.db.Exec(`INSERT INTO paintings_authors (painting_id, author_id) VALUES ($1,$2)`, id, aID); err != nil {
+			return nil, err
+		}
+	}
+	for _, sID := range styleIDs {
+		if _, err := r.db.Exec(`INSERT INTO paintings_styles (painting_id, style_id) VALUES ($1,$2)`, id, sID); err != nil {
+			return nil, err
+		}
+	}
+	for _, pID := range plotIDs {
+		if _, err := r.db.Exec(`INSERT INTO paintings_plots (painting_id, plot_id) VALUES ($1,$2)`, id, pID); err != nil {
+			return nil, err
+		}
+	}
+	return r.GetByID(id)
+}
+
+func (r *PaintingRepository) Delete(id int) error {
+	r.db.Exec(`DELETE FROM paintings_authors WHERE painting_id=$1`, id)
+	r.db.Exec(`DELETE FROM paintings_styles  WHERE painting_id=$1`, id)
+	r.db.Exec(`DELETE FROM paintings_plots   WHERE painting_id=$1`, id)
+	_, err := r.db.Exec(`DELETE FROM paintings WHERE id=$1`, id)
+	return err
+}
+
 func (r *PaintingRepository) GetByID(id int) (*model.Painting, error) {
 	p := &model.Painting{}
 	if err := r.db.Get(p, `SELECT id, title, description, year, image_path FROM paintings WHERE id = $1`, id); err != nil {
